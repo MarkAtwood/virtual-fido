@@ -96,20 +96,20 @@ func (channel *ctapHIDChannel) handleDataMessage(header ctapHIDMessageHeader, pa
 		responsePayload := channel.server.u2fServer.HandleMessage(payload)
 		ctapHIDLogger.Printf("CTAPHID MSG RESPONSE: %d %#v\n\n", len(responsePayload), responsePayload)
 		channel.server.sendResponse(header.ChannelID, ctapHIDCommandMsg, responsePayload)
-    case ctapHIDCommandCBOR:
-        // Default keepalive should indicate processing; set UP_NEEDED only when explicitly waiting for touch.
-        stop := util.StartRecurringFunction(keepConnectionAlive(channel.server, channel.channelId, ctapHIDStatusProcessing), 50)
-        var responsePayload []byte
-        // Debug: log dispatch to CTAP with channel + payload length
-        ctapHIDLogger.Printf("CTAPHID dispatch CBOR to CTAP: ch=0x%x len=%d\n\n", channel.channelId, len(payload))
-        if client, ok := channel.server.ctapServer.(interface{ HandleMessageForChannel(uint32, []byte) []byte }); ok {
-            responsePayload = client.HandleMessageForChannel(uint32(channel.channelId), payload)
-        } else {
-            responsePayload = channel.server.ctapServer.HandleMessage(payload)
-        }
-        stop <- 0
-        ctapHIDLogger.Printf("CTAPHID CBOR RESPONSE: %#v\n\n", responsePayload)
-        channel.server.sendResponse(header.ChannelID, ctapHIDCommandCBOR, responsePayload)
+	case ctapHIDCommandCBOR:
+		// Default keepalive should indicate processing; set UP_NEEDED only when explicitly waiting for touch.
+		stop := util.StartRecurringFunction(keepConnectionAlive(channel.server, channel.channelId, ctapHIDStatusProcessing), 50)
+		var responsePayload []byte
+		// Debug: log dispatch to CTAP with channel + payload length
+		ctapHIDLogger.Printf("CTAPHID dispatch CBOR to CTAP: ch=0x%x len=%d\n\n", channel.channelId, len(payload))
+		if client, ok := channel.server.ctapServer.(interface{ HandleMessageForChannel(uint32, []byte) []byte }); ok {
+			responsePayload = client.HandleMessageForChannel(uint32(channel.channelId), payload)
+		} else {
+			responsePayload = channel.server.ctapServer.HandleMessage(payload)
+		}
+		stop <- 0
+		ctapHIDLogger.Printf("CTAPHID CBOR RESPONSE: %#v\n\n", responsePayload)
+		channel.server.sendResponse(header.ChannelID, ctapHIDCommandCBOR, responsePayload)
 	case ctapHIDCommandPing:
 		channel.server.sendResponse(header.ChannelID, ctapHIDCommandPing, payload)
 	default:
