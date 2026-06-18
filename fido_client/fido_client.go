@@ -155,9 +155,10 @@ func (client *DefaultFIDOClient) GetAssertionSources(relyingPartyID string, allo
 	if len(sources) == 0 {
 		return []*identities.CredentialSource{}
 	}
-	// Increment the first one now (first assertion); GetNextAssertion will increment others when signed there if needed
-	sources[0].SignatureCounter++
-	client.saveData()
+	// Do NOT bump the signature counter here: the request may still be denied at
+	// approval. handleGetAssertion advances the selected credential's counter at
+	// signing time (and GetNextAssertion does the same for the remaining ones), so
+	// denied/aborted assertions no longer inflate the counter.
 	return sources
 }
 

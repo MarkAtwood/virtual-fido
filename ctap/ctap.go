@@ -538,6 +538,11 @@ func (server *CTAPServer) handleGetAssertion(data []byte) []byte {
 		flags = flags | authDataFlagUserPresent
 	}
 
+	// Advance the signature counter only now — the assertion is approved and about
+	// to be signed. (GetAssertionSources no longer bumps it pre-approval.)
+	credentialSource.SignatureCounter++
+	server.client.SaveState()
+
 	// Extension handling (hmac-secret)
 	var extData []byte
 	var hmacInput *hmacSecretInput
