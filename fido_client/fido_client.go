@@ -4,7 +4,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"log"
-	"strings"
 
 	"github.com/bulwarkid/virtual-fido/cose"
 	"github.com/bulwarkid/virtual-fido/crypto"
@@ -115,28 +114,22 @@ func (client *DefaultFIDOClient) NewCredentialSource(
 	if !supported {
 		return nil
 	}
-	// Treat platform health-check registrations (e.g., rpId ".dummy" or invalid rp) as ephemeral.
-	// Do not persist these into the vault to avoid polluting real credentials.
-	if relyingParty != nil {
-		rpID := relyingParty.ID
-		rpName := relyingParty.Name
-		userName := ""
-		if user != nil {
-			userName = user.Name
+	// A platform capability/health-check probe registers against the well-known
+	// ".dummy" RP id; for that exact sentinel only, create an ephemeral credential
+	// that is not persisted. Do NOT sniff rp.name / user.name — rp.name is optional
+	// in WebAuthn, so those heuristics silently discarded legitimate registrations
+	// (the credential vanished and could never be used to authenticate).
+	if relyingParty != nil && relyingParty.ID == ".dummy" {
+		priv := crypto.GenerateECDSAKey()
+		eph := &identities.CredentialSource{
+			Type:             "public-key",
+			ID:               crypto.RandomBytes(16),
+			PrivateKey:       &cose.SupportedCOSEPrivateKey{ECDSA: priv},
+			RelyingParty:     relyingParty,
+			User:             user,
+			SignatureCounter: 0,
 		}
-		if rpID == ".dummy" || rpID == "" || strings.HasPrefix(rpID, ".") || (rpName == "" && userName == "dummy") {
-			// Create an ephemeral credential without saving to vault
-			priv := crypto.GenerateECDSAKey()
-			eph := &identities.CredentialSource{
-				Type:             "public-key",
-				ID:               crypto.RandomBytes(16),
-				PrivateKey:       &cose.SupportedCOSEPrivateKey{ECDSA: priv},
-				RelyingParty:     relyingParty,
-				User:             user,
-				SignatureCounter: 0,
-			}
-			return eph
-		}
+		return eph
 	}
 	newSource := client.vault.NewIdentity(relyingParty, user)
 	client.saveData()
