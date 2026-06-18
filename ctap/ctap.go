@@ -405,8 +405,9 @@ type getInfoResponse struct {
 
 func (server *CTAPServer) handleGetInfo() []byte {
 	response := getInfoResponse{
-		// Force CTAP2.0 path so platforms prefer getPINToken (0x05)
-		Versions: []string{"FIDO_2_0", "U2F_V2"},
+		// Advertise the versions we actually implement: legacy U2F, CTAP2.0, and
+		// CTAP2.1 (authenticatorSelection 0x0B + getPinUvAuthTokenUsingPin 0x09).
+		Versions: []string{"U2F_V2", "FIDO_2_0", "FIDO_2_1"},
 		AAGUID:   aaguid,
 		Options: getInfoOptions{
 			IsPlatform:      false,
