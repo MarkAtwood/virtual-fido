@@ -265,6 +265,11 @@ func (server *CTAPServer) handleMakeCredential(data []byte) []byte {
 		args.PINUVAuthParam = nil
 	}
 	ctapLogger.Printf("MAKE CREDENTIAL: %s\n\n", args)
+	// rp (and rp.id) is a required parameter; reject rather than nil-deref args.RP.ID later.
+	if args.RP == nil || args.RP.ID == "" {
+		ctapLogger.Printf("ERROR: MakeCredential missing rp/rp.id\n\n")
+		return []byte{byte(ctap2ErrMissingParam)}
+	}
 	var flags authDataFlags = 0
 
 	supported := false
