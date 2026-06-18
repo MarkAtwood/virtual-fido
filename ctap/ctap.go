@@ -66,6 +66,7 @@ const (
 	ctap2ErrPINInvalid           ctapStatusCode = 0x31
 	ctap2ErrPINBlocked           ctapStatusCode = 0x32
 	ctap2ErrPINAuthInvalid       ctapStatusCode = 0x33
+	ctap2ErrPINAuthBlocked       ctapStatusCode = 0x34
 	ctap2ErrNoPINSet             ctapStatusCode = 0x35
 	ctap2ErrPINRequired          ctapStatusCode = 0x36
 	ctap2ErrPINPolicyViolation   ctapStatusCode = 0x37
@@ -92,6 +93,7 @@ type CTAPClient interface {
 	PINRetries() int32
 	SetPINRetries(retries int32)
 	PINKeyAgreement() *crypto.ECDHKey
+	RotatePINKeyAgreement()
 	PINToken() []byte
 
 	// Persist any state changes (e.g., credRandom or counters)
@@ -116,6 +118,9 @@ type CTAPServer struct {
 	pinSessions map[uint32]*pinSession
 	// per-channel pinUvAuthToken (plaintext) issued most recently
 	pinTokenByChannel map[uint32][]byte
+	// pinBootFailures counts consecutive wrong-PIN attempts this power cycle; at
+	// pinMaxBootFailures the authenticator refuses further PIN auth until restart.
+	pinBootFailures uint8
 }
 
 func NewCTAPServer(client CTAPClient) *CTAPServer {
@@ -938,12 +943,41 @@ func (server *CTAPServer) handleSetPIN(args clientPINArgs) []byte {
 	return []byte{byte(ctap1ErrSuccess)}
 }
 
+const pinMaxBootFailures = 3
+
+// pinBootBlocked reports whether the per-power-cycle wrong-PIN limit is reached.
+func (server *CTAPServer) pinBootBlocked() bool {
+	return server.pinBootFailures >= pinMaxBootFailures
+}
+
+// pinFailureResponse records a wrong-PIN attempt: it invalidates the shared secret
+// by rotating the key agreement (forcing the platform to re-handshake) and the
+// per-channel PIN session, counts the failure toward the per-power-cycle limit,
+// then returns the appropriate CTAP error (Blocked > AuthBlocked > Invalid).
+func (server *CTAPServer) pinFailureResponse() []byte {
+	server.client.RotatePINKeyAgreement()
+	if server.currentChannelID != 0 {
+		delete(server.pinSessions, server.currentChannelID)
+	}
+	server.pinBootFailures++
+	if server.client.PINRetries() <= 0 {
+		return []byte{byte(ctap2ErrPINBlocked)}
+	}
+	if server.pinBootBlocked() {
+		return []byte{byte(ctap2ErrPINAuthBlocked)}
+	}
+	return []byte{byte(ctap2ErrPINInvalid)}
+}
+
 func (server *CTAPServer) handleChangePIN(args clientPINArgs) []byte {
 	if args.KeyAgreement == nil || args.PINUVAuthParam == nil {
 		return []byte{byte(ctap2ErrMissingParam)}
 	}
-	if server.client.PINRetries() == 0 {
+	if server.client.PINRetries() <= 0 {
 		return []byte{byte(ctap2ErrPINBlocked)}
+	}
+	if server.pinBootBlocked() {
+		return []byte{byte(ctap2ErrPINAuthBlocked)}
 	}
 	sharedSecret := server.getPINSharedSecret(*args.KeyAgreement)
 	pinAuth := server.derivePINAuth(sharedSecret, append(args.NewPINEncoding, args.PINHashEncoding...))
@@ -953,10 +987,10 @@ func (server *CTAPServer) handleChangePIN(args clientPINArgs) []byte {
 	server.client.SetPINRetries(server.client.PINRetries() - 1)
 	decryptedPINHash := crypto.DecryptAESCBC(sharedSecret, args.PINHashEncoding)
 	if subtle.ConstantTimeCompare(server.client.PINHash(), decryptedPINHash) != 1 {
-		// TODO: Mismatch detected, handle it
-		return []byte{byte(ctap2ErrPINInvalid)}
+		return server.pinFailureResponse()
 	}
 	server.client.SetPINRetries(8)
+	server.pinBootFailures = 0
 	newPIN := server.decryptPIN(sharedSecret, args.NewPINEncoding)
 	if len(newPIN) < 4 {
 		return []byte{byte(ctap2ErrPINPolicyViolation)}
@@ -973,16 +1007,19 @@ func (server *CTAPServer) handleGetPINToken(args clientPINArgs) []byte {
 	if server.client.PINRetries() <= 0 {
 		return []byte{byte(ctap2ErrPINBlocked)}
 	}
+	if server.pinBootBlocked() {
+		return []byte{byte(ctap2ErrPINAuthBlocked)}
+	}
 	sharedSecret := server.getPINSharedSecret(*args.KeyAgreement)
 	server.client.SetPINRetries(server.client.PINRetries() - 1)
 	pinHash := server.decryptPINHash(sharedSecret, args.PINHashEncoding)
 	unsafeCtapLogger.Printf("TRYING PIN HASH: %v\n\n", hex.EncodeToString(pinHash))
 	if subtle.ConstantTimeCompare(pinHash, server.client.PINHash()) != 1 {
-		// TODO: Handle mismatch here by regening the key agreement key
 		unsafeCtapLogger.Printf("MISMATCH: Provided PIN %v doesn't match stored PIN %v\n\n", hex.EncodeToString(pinHash), hex.EncodeToString(server.client.PINHash()))
-		return []byte{byte(ctap2ErrPINInvalid)}
+		return server.pinFailureResponse()
 	}
 	server.client.SetPINRetries(8)
+	server.pinBootFailures = 0
 	// Issue encrypted token; also cache plaintext per channel for MC/GA verification
 	plain := server.client.PINToken()
 	enc := crypto.EncryptAESCBC(sharedSecret, plain)
@@ -1008,15 +1045,19 @@ func (server *CTAPServer) handleGetPinUvAuthTokenUsingPin(args clientPINArgs) []
 	if server.client.PINRetries() <= 0 {
 		return []byte{byte(ctap2ErrPINBlocked)}
 	}
+	if server.pinBootBlocked() {
+		return []byte{byte(ctap2ErrPINAuthBlocked)}
+	}
 	sharedSecret := server.getPINSharedSecret(*args.KeyAgreement)
 	server.client.SetPINRetries(server.client.PINRetries() - 1)
 	pinHash := server.decryptPINHash(sharedSecret, args.PINHashEncoding)
 	unsafeCtapLogger.Printf("TRYING PIN HASH (2.1): %v\n\n", hex.EncodeToString(pinHash))
 	if subtle.ConstantTimeCompare(pinHash, server.client.PINHash()) != 1 {
 		unsafeCtapLogger.Printf("MISMATCH (2.1): Provided PIN %v doesn't match stored PIN %v\n\n", hex.EncodeToString(pinHash), hex.EncodeToString(server.client.PINHash()))
-		return []byte{byte(ctap2ErrPINInvalid)}
+		return server.pinFailureResponse()
 	}
 	server.client.SetPINRetries(8)
+	server.pinBootFailures = 0
 	plain := server.client.PINToken()
 	enc := crypto.EncryptAESCBC(sharedSecret, plain)
 	response := clientPINResponse{PinToken: enc}

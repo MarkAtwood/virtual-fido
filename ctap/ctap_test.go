@@ -67,6 +67,7 @@ func (client *dummyCTAPClient) SetPINRetries(retries int32) {}
 func (client *dummyCTAPClient) PINKeyAgreement() *crypto.ECDHKey {
 	return nil
 }
+func (client *dummyCTAPClient) RotatePINKeyAgreement() {}
 func (client *dummyCTAPClient) PINToken() []byte {
 	return nil
 }

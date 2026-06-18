@@ -249,7 +249,9 @@ func (client *DefaultFIDOClient) VerifyUser(action ClientAction, params ClientAc
 }
 
 func (client *DefaultFIDOClient) PINRetries() int32 {
-	util.Assert(client.pinRetries > 0 && client.pinRetries <= 8, "Invalid PIN Retries")
+	// pinRetries may legitimately reach 0 (PIN blocked); only assert the upper bound
+	// — asserting > 0 made every PINRetries() call panic once the PIN was blocked.
+	util.Assert(client.pinRetries >= 0 && client.pinRetries <= 8, "Invalid PIN Retries")
 	return client.pinRetries
 }
 
