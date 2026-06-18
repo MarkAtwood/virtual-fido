@@ -272,6 +272,12 @@ func (client *DefaultFIDOClient) PINToken() []byte {
 	return client.pinToken
 }
 
+// RotatePINToken generates a fresh pinUvAuthToken, invalidating any previously
+// issued tokens (e.g. after a PIN set/change so old tokens can no longer be used).
+func (client *DefaultFIDOClient) RotatePINToken() {
+	client.pinToken = crypto.RandomBytes(32)
+}
+
 func (client *DefaultFIDOClient) SaveState() {
 	client.saveData()
 }

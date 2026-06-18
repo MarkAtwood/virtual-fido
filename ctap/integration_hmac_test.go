@@ -151,6 +151,21 @@ func TestHmacSecretTwoSalts(t *testing.T) {
 	// Correct pinAuth with the GA clientDataHash
 	argsGA.PINUVAuthParam = hmac16(client.PINToken(), argsGA.ClientDataHash)
 
+	// Establish a pinUvAuthToken on the GA channel (1) via a real getPINToken, so the
+	// GA verifies against a session-issued token (production no longer falls back to
+	// the standing token on a real, non-zero channel).
+	{
+		plat := crypto.GenerateECDHKey()
+		sharedPIN := crypto.HashSHA256(client.PINKeyAgreement().ECDH(plat.X, plat.Y))
+		pinHashEnc := crypto.EncryptAESCBC(sharedPIN, crypto.HashSHA256([]byte("1234"))[:16])
+		ka := &cose.COSEEC2Key{KeyType: int8(cose.COSE_KEY_TYPE_EC2), Algorithm: int8(cose.COSE_ALGORITHM_ID_ECDH_HKDF_256), Curve: int8(1), X: plat.X.Bytes(), Y: plat.Y.Bytes()}
+		pinReq := clientPINArgs{PINUVAuthProtocol: 1, SubCommand: clientPinSubcommandGetPINToken, KeyAgreement: ka, PINHashEncoding: pinHashEnc}
+		resp := ctap.HandleMessageForChannel(1, util.Concat([]byte{byte(ctapCommandClientPIN)}, util.MarshalCBOR(pinReq)))
+		if ctapStatusCode(resp[0]) != ctap1ErrSuccess {
+			t.Fatalf("getPINToken (chan 1) failed: %x", resp[0])
+		}
+	}
+
 	payloadGA := util.Concat([]byte{byte(ctapCommandGetAssertion)}, util.MarshalCBOR(argsGA))
 	// Use channel-aware handler to enable GetNextAssertion sessions
 	respGA := ctap.HandleMessageForChannel(1, payloadGA)

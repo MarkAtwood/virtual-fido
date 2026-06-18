@@ -95,6 +95,7 @@ type CTAPClient interface {
 	PINKeyAgreement() *crypto.ECDHKey
 	RotatePINKeyAgreement()
 	PINToken() []byte
+	RotatePINToken()
 
 	// Persist any state changes (e.g., credRandom or counters)
 	SaveState()
@@ -319,12 +320,14 @@ func (server *CTAPServer) handleMakeCredential(data []byte) []byte {
 				return []byte{byte(ctap2ErrPINAuthInvalid)}
 			}
 			token := server.pinTokenByChannel[server.currentChannelID]
-			// Fallback for unit tests or non-channel flows: allow verifying with authenticator's token
-			if token == nil {
+			// Standing-token fallback is allowed ONLY on the non-channel/test path
+			// (channel 0). Real HID traffic always carries a channel, so production
+			// requires a token actually issued via getPINToken on this channel.
+			if token == nil && server.currentChannelID == 0 {
 				token = server.client.PINToken()
 			}
-			if token == nil || len(token) == 0 {
-				return []byte{byte(ctap2ErrPINRequired)}
+			if len(token) == 0 {
+				return []byte{byte(ctap2ErrPINAuthInvalid)}
 			}
 			pinAuth := server.derivePINAuth(token, args.ClientDataHash)
 			if subtle.ConstantTimeCompare(pinAuth, args.PINUVAuthParam) != 1 {
@@ -514,11 +517,13 @@ func (server *CTAPServer) handleGetAssertion(data []byte) []byte {
 			return []byte{byte(ctap2ErrPINAuthInvalid)}
 		}
 		token := server.pinTokenByChannel[server.currentChannelID]
-		if token == nil {
+		// Standing-token fallback only on the non-channel/test path (channel 0);
+		// production HID requires a token issued via getPINToken on this channel.
+		if token == nil && server.currentChannelID == 0 {
 			token = server.client.PINToken()
 		}
-		if token == nil || len(token) == 0 {
-			return []byte{byte(ctap2ErrPINRequired)}
+		if len(token) == 0 {
+			return []byte{byte(ctap2ErrPINAuthInvalid)}
 		}
 		pinAuth := server.derivePINAuth(token, args.ClientDataHash)
 		if subtle.ConstantTimeCompare(pinAuth, args.PINUVAuthParam) != 1 {
@@ -938,7 +943,11 @@ func (server *CTAPServer) handleSetPIN(args clientPINArgs) []byte {
 	}
 	pinHash := crypto.HashSHA256(decryptedPIN)[:16]
 	server.client.SetPINRetries(8)
+	server.pinBootFailures = 0
 	server.client.SetPINHash(pinHash)
+	// Setting a PIN rotates the pinUvAuthToken and drops cached per-channel tokens.
+	server.client.RotatePINToken()
+	server.pinTokenByChannel = make(map[uint32][]byte)
 	unsafeCtapLogger.Printf("SETTING PIN HASH: %v\n\n", hex.EncodeToString(pinHash))
 	return []byte{byte(ctap1ErrSuccess)}
 }
@@ -997,6 +1006,9 @@ func (server *CTAPServer) handleChangePIN(args clientPINArgs) []byte {
 	}
 	pinHash := crypto.HashSHA256(newPIN)[:16]
 	server.client.SetPINHash(pinHash)
+	// Changing the PIN rotates the pinUvAuthToken and drops cached per-channel tokens.
+	server.client.RotatePINToken()
+	server.pinTokenByChannel = make(map[uint32][]byte)
 	return []byte{byte(ctap1ErrSuccess)}
 }
 
