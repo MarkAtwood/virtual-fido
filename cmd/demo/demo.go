@@ -238,6 +238,15 @@ func start(cmd *cobra.Command, args []string) {
 }
 
 func createClient() *fido_client.DefaultFIDOClient {
+	// Resolve the vault passphrase: the --passphrase flag wins, otherwise fall
+	// back to $VFIDO_PASSPHRASE (keeps the secret out of argv; environ is not
+	// world-readable, cmdline is).
+	if vaultPassphrase == "" {
+		vaultPassphrase = os.Getenv("VFIDO_PASSPHRASE")
+	}
+	if vaultPassphrase == "" {
+		checkErr(fmt.Errorf("no passphrase provided"), "pass --passphrase or set $VFIDO_PASSPHRASE")
+	}
 	// ALL OF THIS IS INSECURE, FOR TESTING PURPOSES ONLY
 	caPrivateKey, err := identities.CreateCAPrivateKey()
 	checkErr(err, "Could not generate attestation CA private key")
@@ -278,11 +287,10 @@ Common tasks:
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&vaultFilename, "vault", "", "vault.json", "Identity vault filename")
-	rootCmd.PersistentFlags().StringVarP(&vaultPassphrase, "passphrase", "", "passphrase", "Identity vault passphrase")
+	rootCmd.PersistentFlags().StringVarP(&vaultPassphrase, "passphrase", "", "", "Identity vault passphrase (defaults to $VFIDO_PASSPHRASE)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
 	rootCmd.PersistentFlags().StringVar(&fingerprintUser, "fingerprint-user", "", "Override system user for fingerprint verification (default: current user)")
 	rootCmd.MarkFlagRequired("vault")
-	rootCmd.MarkFlagRequired("passphrase")
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
 	start := &cobra.Command{

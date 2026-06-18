@@ -38,18 +38,21 @@ type ClientSupport struct {
 }
 
 func (support *ClientSupport) ApproveClientAction(action fido_client.ClientAction, params fido_client.ClientActionRequestParams) bool {
+	var description string
 	switch action {
 	case fido_client.ClientActionFIDOGetAssertion:
-		return prompt(fmt.Sprintf("Approve login for \"%s\" with identity \"%s\" (Y/n)?", params.RelyingParty, params.UserName))
+		description = fmt.Sprintf("login to \"%s\" as \"%s\"", params.RelyingParty, params.UserName)
 	case fido_client.ClientActionFIDOMakeCredential:
-		return prompt(fmt.Sprintf("Approve account creation for \"%s\" (Y/n)?", params.RelyingParty))
+		description = fmt.Sprintf("account creation for \"%s\"", params.RelyingParty)
 	case fido_client.ClientActionU2FAuthenticate:
-		return prompt("Approve registration of U2F device (Y/n)?")
+		description = "U2F authentication (login)"
 	case fido_client.ClientActionU2FRegister:
-		return prompt("Approve use of U2F device (Y/n)?")
+		description = "U2F registration (enroll)"
+	default:
+		fmt.Printf("Unknown client action for approval: %d\n", action)
+		return false
 	}
-	fmt.Printf("Unknown client action for approval: %d\n", action)
-	return false
+	return approveAction(description)
 }
 
 func (support *ClientSupport) SaveData(data []byte) {
@@ -126,6 +129,7 @@ func (support *ClientSupport) fingerprintPrompt(action fido_client.ClientAction,
 }
 
 func runServer(client virtual_fido.FIDOClient) {
+	startApprovalListener()
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
