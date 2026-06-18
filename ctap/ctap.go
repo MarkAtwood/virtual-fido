@@ -321,6 +321,11 @@ func (server *CTAPServer) handleMakeCredential(data []byte) []byte {
 			} else {
 				return []byte{byte(ctap2ErrPINRequired)}
 			}
+		} else {
+			// A PIN is configured but the request supplied neither a pinUvAuthParam
+			// nor a uv option. CTAP2 requires CTAP2_ERR_PIN_REQUIRED here — do not
+			// fall through and create the credential without verification.
+			return []byte{byte(ctap2ErrPINRequired)}
 		}
 	} else if wantsUV {
 		params := fido_client.ClientActionRequestParams{RelyingParty: rpName, UserName: userName}
