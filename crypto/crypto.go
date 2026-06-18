@@ -152,6 +152,14 @@ func EncryptAESCBC(key []byte, data []byte) []byte {
 func DecryptAESCBC(key []byte, data []byte) []byte {
 	aesCipher, err := aes.NewCipher(key)
 	util.CheckErr(err, "Could not create AES cipher")
+	// CBC requires the input to be a non-zero multiple of the block size;
+	// cipher.CryptBlocks panics otherwise. Callers may pass attacker-controlled
+	// ciphertext (e.g. CTAP ClientPIN / hmac-secret fields), so reject bad
+	// lengths instead of crashing the whole process — return nil and let the
+	// caller surface a protocol error.
+	if len(data) == 0 || len(data)%aesCipher.BlockSize() != 0 {
+		return nil
+	}
 	iv := make([]byte, aesCipher.BlockSize())
 	cbc := cipher.NewCBCDecrypter(aesCipher, iv)
 	decryptedData := make([]byte, len(data))
