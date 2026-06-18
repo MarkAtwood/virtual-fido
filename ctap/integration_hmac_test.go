@@ -185,6 +185,8 @@ func TestHmacSecretTwoSalts(t *testing.T) {
 	h2 := hmac.New(sha256.New, credRandom)
 	h2.Write(salt2)
 	want2 := h2.Sum(nil)
+	// Per CTAP2 the hmac-secret output is returned encrypted with the shared secret.
+	out = crypto.DecryptAESCBC(shared, out)
 	if !bytes.Equal(out[:32], want1) || !bytes.Equal(out[32:], want2) {
 		t.Fatalf("hmac-secret outputs mismatch")
 	}

@@ -636,12 +636,14 @@ func (server *CTAPServer) computeHmacSecretOutput(cred *identities.CredentialSou
 	h.Write(salts[:32])
 	out1 := h.Sum(nil)
 	if len(salts) == 32 {
-		return out1, true
+		// Per CTAP2, the hmac-secret output must be returned encrypted with the
+		// shared secret (zero-IV AES-CBC, PIN protocol v1), not as raw HMAC.
+		return crypto.EncryptAESCBC(sharedSecret, out1), true
 	}
 	h2 := hmac.New(sha256.New, cred.CredRandom)
 	h2.Write(salts[32:])
 	out2 := h2.Sum(nil)
-	return util.Concat(out1, out2), true
+	return crypto.EncryptAESCBC(sharedSecret, util.Concat(out1, out2)), true
 }
 
 type assertionSession struct {
