@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"sync"
 
 	"github.com/bulwarkid/virtual-fido/cose"
 	"github.com/bulwarkid/virtual-fido/crypto"
@@ -103,6 +104,11 @@ type CTAPClient interface {
 
 type CTAPServer struct {
 	client CTAPClient
+	// mu serializes all CTAP message handling. A real authenticator processes one
+	// command at a time, and the USB/HID layer dispatches each message in its own
+	// goroutine, so this guards currentChannelID and the per-channel maps below
+	// against concurrent read/write (which would otherwise crash the process).
+	mu sync.Mutex
 	// per-channel assertion sessions for GetNextAssertion
 	assertionSessions map[uint32]*assertionSession
 	currentChannelID  uint32
@@ -123,13 +129,22 @@ func NewCTAPServer(client CTAPClient) *CTAPServer {
 
 // Optional: allow HID layer to pass channel context
 func (server *CTAPServer) HandleMessageForChannel(channelID uint32, data []byte) []byte {
+	server.mu.Lock()
+	defer server.mu.Unlock()
 	server.currentChannelID = channelID
 	ctapLogger.Printf("CTAP: using channel 0x%x for this request\n\n", channelID)
 	defer func() { server.currentChannelID = 0 }()
-	return server.HandleMessage(data)
+	return server.dispatch(data)
 }
 
 func (server *CTAPServer) HandleMessage(data []byte) []byte {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return server.dispatch(data)
+}
+
+// dispatch runs the command switch; callers must hold server.mu.
+func (server *CTAPServer) dispatch(data []byte) []byte {
 	command := ctapCommand(data[0])
 	ctapLogger.Printf("CTAP COMMAND: %s\n\n", ctapCommandDescriptions[command])
 	switch command {
