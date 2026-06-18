@@ -906,7 +906,7 @@ func (server *CTAPServer) handleSetPIN(args clientPINArgs) []byte {
 	pinHash := crypto.HashSHA256(decryptedPIN)[:16]
 	server.client.SetPINRetries(8)
 	server.client.SetPINHash(pinHash)
-	ctapLogger.Printf("SETTING PIN HASH: %v\n\n", hex.EncodeToString(pinHash))
+	unsafeCtapLogger.Printf("SETTING PIN HASH: %v\n\n", hex.EncodeToString(pinHash))
 	return []byte{byte(ctap1ErrSuccess)}
 }
 
@@ -948,10 +948,10 @@ func (server *CTAPServer) handleGetPINToken(args clientPINArgs) []byte {
 	sharedSecret := server.getPINSharedSecret(*args.KeyAgreement)
 	server.client.SetPINRetries(server.client.PINRetries() - 1)
 	pinHash := server.decryptPINHash(sharedSecret, args.PINHashEncoding)
-	ctapLogger.Printf("TRYING PIN HASH: %v\n\n", hex.EncodeToString(pinHash))
+	unsafeCtapLogger.Printf("TRYING PIN HASH: %v\n\n", hex.EncodeToString(pinHash))
 	if subtle.ConstantTimeCompare(pinHash, server.client.PINHash()) != 1 {
 		// TODO: Handle mismatch here by regening the key agreement key
-		ctapLogger.Printf("MISMATCH: Provided PIN %v doesn't match stored PIN %v\n\n", hex.EncodeToString(pinHash), hex.EncodeToString(server.client.PINHash()))
+		unsafeCtapLogger.Printf("MISMATCH: Provided PIN %v doesn't match stored PIN %v\n\n", hex.EncodeToString(pinHash), hex.EncodeToString(server.client.PINHash()))
 		return []byte{byte(ctap2ErrPINInvalid)}
 	}
 	server.client.SetPINRetries(8)
@@ -983,9 +983,9 @@ func (server *CTAPServer) handleGetPinUvAuthTokenUsingPin(args clientPINArgs) []
 	sharedSecret := server.getPINSharedSecret(*args.KeyAgreement)
 	server.client.SetPINRetries(server.client.PINRetries() - 1)
 	pinHash := server.decryptPINHash(sharedSecret, args.PINHashEncoding)
-	ctapLogger.Printf("TRYING PIN HASH (2.1): %v\n\n", hex.EncodeToString(pinHash))
+	unsafeCtapLogger.Printf("TRYING PIN HASH (2.1): %v\n\n", hex.EncodeToString(pinHash))
 	if subtle.ConstantTimeCompare(pinHash, server.client.PINHash()) != 1 {
-		ctapLogger.Printf("MISMATCH (2.1): Provided PIN %v doesn't match stored PIN %v\n\n", hex.EncodeToString(pinHash), hex.EncodeToString(server.client.PINHash()))
+		unsafeCtapLogger.Printf("MISMATCH (2.1): Provided PIN %v doesn't match stored PIN %v\n\n", hex.EncodeToString(pinHash), hex.EncodeToString(server.client.PINHash()))
 		return []byte{byte(ctap2ErrPINInvalid)}
 	}
 	server.client.SetPINRetries(8)
