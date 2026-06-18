@@ -1,5 +1,4 @@
-/target
-vault.data
-.DS_store
-/demo
-vault.json
+vfido
+usbip
+cmd/demo/usbip
+*.out

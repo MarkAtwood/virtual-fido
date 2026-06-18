@@ -17,14 +17,14 @@ type USBDeviceDelegate interface {
 }
 
 type USBDevice struct {
-	delegate        USBDeviceDelegate
+	delegate      USBDeviceDelegate
 	requestBuffer *util.RequestBuffer
 }
 
 func NewUSBDevice(delegate USBDeviceDelegate) *USBDevice {
 	device := &USBDevice{
-		delegate:        delegate,
-		requestBuffer:   util.MakeRequestBuffer(),
+		delegate:      delegate,
+		requestBuffer: util.MakeRequestBuffer(),
 	}
 	delegate.SetResponseHandler(func(response []byte) {
 		device.handleResponse(response)
@@ -75,17 +75,15 @@ func (device *USBDevice) HandleMessage(id uint32, onFinish func(response []byte)
 		reply := device.handleControlMessage(setup)
 		onFinish(reply)
 	case usbEndpointOutput:
+		// This endpoint corresponds to INTERRUPT IN (host is reading from device).
+		// Keep the URB pending until a real HID frame is ready. Do NOT fabricate zeros.
+		// The response will be provided asynchronously via delegate's SetResponseHandler -> handleResponse.
 		device.requestBuffer.Request(id, onFinish)
-		util.SetTimeout(1000, func() {
-			// If the request hasn't finished yet, cancel it and return nil
-			if device.requestBuffer.CancelRequest(id) {
-				onFinish(nil)
-			}
-		})
-		// onFinish will be called when a response is returned
+		// Do not auto-cancel; host may unlink if it wants to abort (handled via RemoveWaitingRequest).
 	case usbEndpointInput:
 		usbLogger.Printf("INPUT DATA: %#v\n\n", data)
 		go device.delegate.HandleMessage(data)
+		// ACK OUT transfer immediately; no data returned on OUT URB
 		onFinish(nil)
 	default:
 		util.Panic(fmt.Sprintf("Invalid USB endpoint: %d", endpoint))

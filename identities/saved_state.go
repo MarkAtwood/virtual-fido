@@ -3,6 +3,7 @@ package identities
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/bulwarkid/virtual-fido/crypto"
 	"github.com/bulwarkid/virtual-fido/util"
@@ -18,6 +19,7 @@ type SavedCredentialSource struct {
 	RelyingParty     webauthn.PublicKeyCredentialRPEntity    `json:"relying_party"`
 	User             webauthn.PublicKeyCrendentialUserEntity `json:"user"`
 	SignatureCounter int32                                   `json:"signature_counter"`
+	CredRandom       []byte                                  `json:"cred_random,omitempty"`
 }
 
 type FIDODeviceConfig struct {
@@ -27,6 +29,7 @@ type FIDODeviceConfig struct {
 	AuthenticationCounter  uint32                  `json:"authentication_counter"`
 	PINEnabled             bool                    `json:"pin_enabled,omitempty"`
 	PINHash                []byte                  `json:"pin_hash,omitempty"`
+	FingerprintEnabled     bool                    `json:"fingerprint_enabled,omitempty"`
 	Sources                []SavedCredentialSource `json:"sources"`
 }
 
@@ -38,9 +41,37 @@ type PassphraseEncryptedBlob struct {
 	DataNonce     []byte `json:"data_nonce"`
 }
 
+const scryptN, scryptR, scryptP, scryptKeyLen = 32768, 8, 1, 32
+
+// kekCache memoizes the scrypt-derived key-encryption-key for the active
+// passphrase within this process. Repeated vault saves (e.g. a signature-counter
+// bump on every assertion) would otherwise each re-run scrypt (~50-150ms); with
+// the cache they reuse the same salt+KEK and only re-encrypt with a fresh random
+// data key and nonces.
+var kekCache struct {
+	mu         sync.Mutex
+	passphrase string
+	salt       []byte
+	kek        []byte
+}
+
+func cachedKEK(passphrase string) (kek, salt []byte, err error) {
+	kekCache.mu.Lock()
+	defer kekCache.mu.Unlock()
+	if kekCache.kek != nil && kekCache.passphrase == passphrase {
+		return kekCache.kek, kekCache.salt, nil
+	}
+	salt = crypto.RandomBytes(16)
+	kek, err = scrypt.Key([]byte(passphrase), salt, scryptN, scryptR, scryptP, scryptKeyLen)
+	if err != nil {
+		return nil, nil, err
+	}
+	kekCache.passphrase, kekCache.salt, kekCache.kek = passphrase, salt, kek
+	return kek, salt, nil
+}
+
 func EncryptWithPassphrase(passphrase string, data []byte) ([]byte, error) {
-	salt := crypto.RandomBytes(16)
-	keyEncryptionKey, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
+	keyEncryptionKey, salt, err := cachedKEK(passphrase)
 	if err != nil {
 		return nil, fmt.Errorf("Could not create key encryption key: %w", err)
 	}
@@ -73,8 +104,12 @@ func DecryptWithPassphrase(passphrase string, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Could not unmarshal JSON into encrypted data: %w", err)
 	}
-	keyEncryptionKey, err := scrypt.Key([]byte(passphrase), blob.Salt, 32768, 8, 1, 32)
+	keyEncryptionKey, err := scrypt.Key([]byte(passphrase), blob.Salt, scryptN, scryptR, scryptP, scryptKeyLen)
 	util.CheckErr(err, "Could not create key encryption key")
+	// Warm the cache so subsequent saves reuse this KEK/salt without re-deriving.
+	kekCache.mu.Lock()
+	kekCache.passphrase, kekCache.salt, kekCache.kek = passphrase, blob.Salt, keyEncryptionKey
+	kekCache.mu.Unlock()
 	encryptionKey, err := crypto.Decrypt(keyEncryptionKey, blob.EncryptionKey, blob.KeyNonce)
 	if err != nil {
 		return nil, fmt.Errorf("Could not decrypt encryption key: %w", err)
