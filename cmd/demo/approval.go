@@ -25,10 +25,11 @@ import (
 //	                         timeout approves; non-zero or timeout denies.
 //	VFIDO_APPROVE_FIFO       Path to a FIFO; approval is granted when a line
 //	                         containing "y" is read from it before the timeout.
-//	VFIDO_APPROVE_NOTIFY_CMD Optional command run (via `sh -c`) at the start and
-//	                         end of every approval wait, receiving "begin"/"end"
-//	                         as $1 and the description as $2. Handy to drive an
-//	                         LED or on-screen hint while waiting.
+//	VFIDO_APPROVE_NOTIFY_CMD Optional command run (via `sh -c`) around every
+//	                         approval wait, receiving the event as $1 ("begin"
+//	                         when the wait starts, "end" if approved, "denied" if
+//	                         refused/timed out) and the description as $2. Handy
+//	                         to drive an LED or on-screen hint.
 //	VFIDO_APPROVE_TIMEOUT    Approval timeout in seconds (default 20; 0 = wait
 //	                         forever).
 //
@@ -58,20 +59,33 @@ func runHook(cmd string, args ...string) {
 }
 
 // approveAction resolves a single approval for a human-readable action.
+//
+// The notify hook (VFIDO_APPROVE_NOTIFY_CMD) is called with "begin" when the
+// wait starts, then with "end" if it was approved or "denied" if it was refused
+// or timed out — so a UI/LED can show progress and the outcome.
 func approveAction(description string) bool {
-	if notify := os.Getenv("VFIDO_APPROVE_NOTIFY_CMD"); notify != "" {
+	notify := os.Getenv("VFIDO_APPROVE_NOTIFY_CMD")
+	if notify != "" {
 		runHook(notify, "begin", description)
-		defer runHook(notify, "end", description)
 	}
 	timeout := approvalTimeout()
+	var approved bool
 	switch {
 	case os.Getenv("VFIDO_APPROVE_CMD") != "":
-		return runApproveCmd(os.Getenv("VFIDO_APPROVE_CMD"), description, timeout)
+		approved = runApproveCmd(os.Getenv("VFIDO_APPROVE_CMD"), description, timeout)
 	case os.Getenv("VFIDO_APPROVE_FIFO") != "":
-		return waitFifoApproval(description, timeout)
+		approved = waitFifoApproval(description, timeout)
 	default:
-		return prompt(fmt.Sprintf("Approve %s (Y/n)?", description))
+		approved = prompt(fmt.Sprintf("Approve %s (Y/n)?", description))
 	}
+	if notify != "" {
+		if approved {
+			runHook(notify, "end", description)
+		} else {
+			runHook(notify, "denied", description)
+		}
+	}
+	return approved
 }
 
 // runApproveCmd runs an external approval command; exit 0 within the timeout
