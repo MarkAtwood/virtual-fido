@@ -606,7 +606,7 @@ func (server *CTAPServer) handleGetAssertion(data []byte) []byte {
 
 	// Save remaining for GetNextAssertion if multiple
 	if len(sources) > 1 && server.currentChannelID != 0 {
-		sess := &assertionSession{rpID: args.RPID, clientDataHash: args.ClientDataHash}
+		sess := &assertionSession{rpID: args.RPID, clientDataHash: args.ClientDataHash, userVerified: uvSatisfied}
 		// Copy remaining
 		rem := make([]*identities.CredentialSource, len(sources)-1)
 		copy(rem, sources[1:])
@@ -660,6 +660,7 @@ type assertionSession struct {
 	rpID           string
 	clientDataHash []byte
 	remaining      []*identities.CredentialSource
+	userVerified   bool
 	useHmac        bool
 	hmacInput      hmacSecretInput
 }
@@ -678,8 +679,13 @@ func (server *CTAPServer) handleGetNextAssertion() []byte {
 	sess.remaining = sess.remaining[1:]
 
 	var flags authDataFlags = 0
-	// For simplicity: set UP on each next assertion (user presence was approved earlier)
+	// Propagate UP and UV from the original GetAssertion: user was already
+	// verified and present when the batch was approved, so every subsequent
+	// assertion in the batch must carry the same flags for the RP to accept it.
 	flags = flags | authDataFlagUserPresent
+	if sess.userVerified {
+		flags = flags | authDataFlagUserVerified
+	}
 
 	var extData []byte
 	if sess.useHmac {
